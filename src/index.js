@@ -15,7 +15,7 @@
  * @module dsh-plugin-btw
  */
 
-import { runBtw } from './btw.js'
+import { createRuntimeState, disposeRuntimeState, runBtw } from './btw.js'
 
 export const name = 'dsh-plugin-btw'
 
@@ -30,15 +30,17 @@ export const inject = ['commands', 'subagents', 'agents', 'sessionProjections']
  */
 export function apply(ctx) {
   const lifetime = new AbortController()
+  const state = createRuntimeState()
   ctx.effect(() => () => {
     lifetime.abort(new Error('dsh-plugin-btw was unloaded'))
-  }, 'dsh-plugin-btw: abort side work on unload')
+    disposeRuntimeState(state)
+  }, 'dsh-plugin-btw: release side threads on unload')
 
   ctx.effect(() => ctx.commands.register({
     name: 'btw',
     description: 'Ask a side question in a separate thread without touching this conversation',
     recordInput: false,
     input: { hint: 'Side question… (prefix "new" to force a new thread)' },
-    handler: invocation => runBtw(ctx, invocation, lifetime.signal),
+    handler: invocation => runBtw(ctx, state, invocation, lifetime.signal),
   }), 'dsh-plugin-btw: /btw command')
 }

@@ -49,8 +49,9 @@ test('buildBtwLabel falls back for an empty question', () => {
 test('buildSideThreadPrompt marks the boundary and carries the question verbatim', () => {
   const prompt = buildSideThreadPrompt('why is the cache cold?')
   assert.ok(prompt.startsWith('Side conversation boundary.'))
+  assert.ok(prompt.includes('reference context only, not your task'))
   assert.ok(prompt.includes('never delivered into the main conversation'))
-  assert.ok(prompt.endsWith('why is the cache cold?'))
+  assert.ok(prompt.endsWith('Question:\nwhy is the cache cold?'))
 })
 
 test('usage copy names both spellings', () => {

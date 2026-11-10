@@ -179,34 +179,73 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Read the newest `BTW · …` thread after refreshing the parent projections.
+     * @param {object} ctx - client root context.
+     * @param {string} parentSessionId - the conversation that issued `/btw`.
+     * @returns {Promise<object | undefined>} the newest catalog entry, if any.
+     */
+    async function readNewestThread(ctx, parentSessionId) {
+      try {
+        await ctx.sessions.refreshProjections(parentSessionId)
+      } catch (_projectionFailure) {
+        // Keep whatever catalog this Client already holds.
+      }
+      return newestThreadEntry(ctx, parentSessionId)
+    }
+
+    /**
      * Reveal the side thread the host just delivered this question to.
      *
-     * The host appends the parent catalog entry before the command returns, so
-     * the entry is usually present immediately; a short retry covers the live
-     * projection frame arriving a beat later.
+     * The host appends the fresh parent catalog entry before the command
+     * returns. A live projection frame can still race the command
+     * acknowledgment, so when the catalog looks unchanged the reveal waits one
+     * beat and reads again: a fresh thread shows up as a newer entry, while a
+     * continued thread leaves the newest entry in place.
+     *
+     * A fresh thread is a new subagent child, and other plugins in the profile
+     * may react by opening their own right-Sidebar tab. Re-revealing the same
+     * address focuses our tab again, so spaced repeats keep the side thread in
+     * front and correct a reveal that picked a stale entry.
      *
      * @param {object} ctx - client root context.
      * @param {string} parentSessionId - the conversation that issued `/btw`.
-     * @returns {Promise<void>} completion after a reveal or after the retries give up.
+     * @param {(task: () => void, delay: number) => void} later - plugin-scoped timer scheduler.
+     * @returns {Promise<void>} completion after the first reveal, or after the retries give up.
      */
-    async function revealThread(ctx, parentSessionId) {
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        try {
-          await ctx.sessions.refreshProjections(parentSessionId)
-        } catch (_projectionFailure) {
-          // Keep whatever catalog this Client already holds.
+    async function revealThread(ctx, parentSessionId, later) {
+      const baseline = newestThreadEntry(ctx, parentSessionId)
+      let entry = await readNewestThread(ctx, parentSessionId)
+      if (baseline !== undefined && (entry === undefined || entry.id === baseline.id)) {
+        await new Promise(resolve => setTimeout(resolve, 300))
+        const settled = await readNewestThread(ctx, parentSessionId)
+        if (settled !== undefined && settled.id !== baseline.id) entry = settled
+      }
+      if (entry === undefined) {
+        for (let attempt = 0; attempt < 4 && entry === undefined; attempt += 1) {
+          await new Promise(resolve => setTimeout(resolve, 350))
+          entry = await readNewestThread(ctx, parentSessionId)
         }
-        const entry = newestThreadEntry(ctx, parentSessionId)
-        if (entry !== undefined) {
-          ctx.sidebarRight.openResource(buildAddress(entry, parentSessionId), {
-            kind: TAB_KIND,
-            preferNewPane: true,
-          })
+      }
+      if (entry === undefined) {
+        ctx.logger?.warn?.('dsh-plugin-btw: no side thread appeared after /btw')
+        return
+      }
+      let revealedId = entry.id
+      const reveal = target => ctx.sidebarRight.openResource(
+        buildAddress(target, parentSessionId),
+        { kind: TAB_KIND },
+      )
+      reveal(entry)
+      const resync = async () => {
+        const latest = await readNewestThread(ctx, parentSessionId)
+        if (latest === undefined) {
+          reveal(entry)
           return
         }
-        await new Promise(resolve => setTimeout(resolve, 400))
+        if (latest.id !== revealedId) revealedId = latest.id
+        reveal(latest)
       }
-      ctx.logger?.warn?.('dsh-plugin-btw: no side thread appeared after /btw')
+      later(() => { void resync() }, 1200)
     }
 
     /**
@@ -246,9 +285,21 @@ window.__ModuleLoader__.load({
        */
       apply(ctx) {
         registerBtwTab(ctx)
+        const revealTimers = new Set()
+        ctx.effect(() => () => {
+          for (const timer of revealTimers) clearTimeout(timer)
+          revealTimers.clear()
+        }, 'dsh-plugin-btw: clear pending reveals')
+        const later = (task, delay) => {
+          const timer = setTimeout(() => {
+            revealTimers.delete(timer)
+            task()
+          }, delay)
+          revealTimers.add(timer)
+        }
         ctx.effect(() => ctx.on('command/executed', (sessionId, commandName) => {
           if (commandName !== 'btw') return
-          void revealThread(ctx, sessionId)
+          void revealThread(ctx, sessionId, later)
         }), 'dsh-plugin-btw: reveal the side thread after /btw')
       },
     }

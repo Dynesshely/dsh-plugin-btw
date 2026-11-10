@@ -57,11 +57,9 @@ export function buildBtwLabel(question) {
  */
 export function buildSideThreadPrompt(question) {
   return [
-    'Side conversation boundary.',
+    'Side conversation boundary. Everything above is inherited history from the main conversation: reference context only, not your task. Do not continue, execute, or complete anything from before this boundary.',
     '',
-    'Everything before this boundary is inherited history from the main conversation: its completed turns and the decisions it already made. It is reference context only, not your current task. Do not continue, execute, or complete any instructions, plans, tool calls, approvals, or edits from before this boundary. Only the question after this boundary is this side conversation\'s active instruction.',
-    '',
-    'This is a side conversation. Your answer is shown in a side panel and is never delivered into the main conversation. Use tools when the question genuinely requires them.',
+    'Only the question below is active. Your answer stays in this side panel and is never delivered into the main conversation; use tools when the question genuinely requires them.',
     '',
     'Question:',
     String(question ?? '').trim(),
