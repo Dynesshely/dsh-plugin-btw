@@ -1,0 +1,7 @@
+# dsh-plugin-btw bundle patch.
+#
+# One host row: the `/btw` command and its side-thread lifecycle. The browser
+# half rides the same package (`dsh.client`), so no second row is needed.
+- insert:
+    - id: btw
+      name: dsh-plugin-btw
