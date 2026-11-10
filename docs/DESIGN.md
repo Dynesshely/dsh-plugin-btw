@@ -12,7 +12,7 @@ Give DeepSeek Harness a `/btw` command that asks an additional question (and, wh
 | D2 | Own right-Sidebar tab type (`btw`) | Own title, guide entry, resource lifecycle, and tab identity. |
 | D3 | A side thread inherits everything the host gives a delegated child | Preset composition, model route, permission roots, working directory, tools. |
 | D4 | `/btw` continues the **newest** thread when it is idle; `/btw new` forces a fresh one | Deterministic: host and browser resolve the same catalog entry. A busy newest thread means the new question starts its own thread instead of interleaving. |
-| D5 | Release the subagent activation as soon as the first turn settles | Idle threads stop consuming `maxActiveSubagents`; follow-ups cold-resume the durable child. |
+| D5 | Release each activation when its turn settles; drop settlement notices of resumed continuations at the parent inbox | The runtime itself settles local activations when the child goes idle. The first activation is `caller` (silent), but a cold-resumed continuation is materialized with the runtime's default `parent` delivery, so its settlement must be filtered out of the parent conversation. |
 | D6 | All artifacts in English | Product surfaces in this deployment are bilingual; code and docs stay English. |
 
 ## Architecture
@@ -35,8 +35,9 @@ Give DeepSeek Harness a `/btw` command that asks an additional question (and, wh
 
 - `src/index.js` registers the command. `recordInput: false` keeps the question out of the parent's command lifecycle record; the truncated question is only in the child's catalog label.
 - `src/btw.js`:
-  - continued thread → `ctx.subagents.sendMessage(parent, childId, [text], { signal })`; this channel cold-resumes an idle direct child and queues or steers a live one.
-  - new thread → `ctx.subagents.startActivation({ provider: 'fork', label, request: { parent, prompt, signal }, signal, delivery: 'caller' })`, then `activation.dispose()` when `activation.result` settles.
+  - continued thread → `ctx.subagents.sendMessage(parent, childId, [text], { signal })`; a resident activation receives the question directly, a cold one is resumed by the runtime.
+  - new thread → `ctx.subagents.startActivation({ provider: 'fork', label, request: { parent, prompt, signal }, signal, delivery: 'caller' })`; the runtime releases the activation when the first turn settles.
+  - per-parent inbox filter → removes `subagent-settled` notices whose sender is one of the conversation's `BTW · …` threads, covering the `parent` delivery of every resumed continuation.
 - `src/threads.js` selects the newest `BTW · ` **continuable** entry from `ctx.sessionProjections.snapshot(parent.session, ['subagentCatalog'])`, and probes liveness with `ctx.agents.get(id)?.status`.
 - `src/label.js` holds the pure grammar (`new` flag), the label budget, and the boundary prompt.
 - One plugin-lifetime `AbortController` cancels side work when the plugin unloads; the command invocation's own signal is **not** forwarded, because it aborts when the command RPC returns.
@@ -69,7 +70,8 @@ Give DeepSeek Harness a `/btw` command that asks an additional question (and, wh
 2. The side thread is a **direct, continuable** child of the conversation that issued `/btw`; it is therefore discoverable from that conversation's subagent catalog.
 3. `/btw` never blocks on a model turn: the command result settles after delivery, not after the answer.
 4. A side thread addressed by the panel is the same thread the question was delivered to (newest-single-thread rule).
-5. Plugin unload aborts live side work and releases resource references.
+5. No `subagent-settled` message from a `/btw` thread reaches the main Agent's inbox.
+6. Plugin unload aborts live side work and releases resource references.
 
 ## Known limitations
 
@@ -77,6 +79,19 @@ Give DeepSeek Harness a `/btw` command that asks an additional question (and, wh
 - A continued question is an adjacent-Agent message, not a human-authored user message (host-side continuation has no public user-source channel for cold children).
 - The native right Sidebar layout is in-memory, so tabs are not restored after reload.
 - No configuration schema in v0.1 (provider, label prefix, boundary prompt are constants).
+
+## Verification record (2026-11-10, local Web profile)
+
+| Check | Result |
+|---|---|
+| Host row active | `plugin_manager` reports `include:btw` enabled / `fiberPhase: active`; install applied without a restart |
+| `/btw <question>` opens a thread | Right Sidebar auto-opens `BTW · <question>` and streams the answer (headless Chromium check) |
+| `/btw new` opens another thread | A second tab appears and stays focused; tab titles come from the catalog labels |
+| Continue reuses the newest idle thread | The newest thread gains a second turn; no extra tab |
+| Main Chat carries no side content | Only `btw · Side thread opened.` / `btw · Question sent to the side thread.` rows; question and answer text absent |
+| Main model context untouched | Parent Session log contains no `user/message` with source `subagent-settled`; the injected notice shows as one canceled inbox splice and one empty turn (no `step/start`, no `assistant/message`) |
+| Console | No warnings or errors from the plugin in the browser console |
+| Unit tests | `npm test` — 11 passing; `npm run check` — syntax OK |
 
 ## Verification plan
 
