@@ -66,15 +66,15 @@ operation. Approvals it raises render in its own tab.
 
 ### Requirements
 
-- DeepSeek Harness with the **Web** surface (`dsh web` or the Desktop web surface).
+- DeepSeek Harness with its Web surface — `dsh web`, or the Desktop app (the same surface).
 - The composed `subagents` service with the **`fork`** provider
   (`@deepseek-ai/dsh-subagent-fork-in-process`, `providerName: fork`), which the
   `@deepseek-ai/dsh-base` bundle mounts by default.
 - Session persistence — a side thread is a durable child Session.
 
-### From the Harness Web UI
+### From the Harness UI
 
-1. Open **Plugins** in the Harness Web UI.
+1. Open **Plugins** in the Harness UI.
 2. Install this package directory as a **local bundle**.
 3. The bundle inserts one Host row (`btw`) and ships its browser half in the same package.
 4. **Reload the page once** so the browser module loads, then type `/btw` in any conversation.
@@ -116,18 +116,18 @@ npm test              # node:test suite for the command, label, and thread-selec
 npm run check         # syntax-check every runtime file
 ```
 
-Install the working tree into a profile and iterate against a running instance:
+Install the working tree into a profile (for example `web`) and iterate against a running instance:
 
 ```bash
-dsh plugin --profile web add /absolute/path/to/dsh-plugin-btw
+dsh plugin --profile <profile> add /absolute/path/to/dsh-plugin-btw
 ```
 
-Then make sure `dsh-plugin-btw` is an active bundle for that profile (Plugins page) and reload the Web
+Then make sure `dsh-plugin-btw` is an active bundle for that profile (Plugins page) and reload the
 page once. While developing:
 
 - **Host code** (`src/`) is loaded when the plugin row activates. Toggle the plugin off and on in the
   Plugins page to pick up changes — no Harness restart needed.
-- **Browser code** (`client.js`) is fetched per page load; a page refresh is enough.
+- **Browser code** (`client.js`) is fetched per page load; a page refresh is enough — this applies to the Desktop app as well, which hosts the same Web surface.
 - The plugin deliberately declares no `Config` schema in v0.1, so there is no live form to reload.
 - Design notes and the DSH extension points this plugin relies on live in
   [`docs/DESIGN.md`](docs/DESIGN.md).
@@ -193,7 +193,7 @@ implementation, not from a second transcript engine.
 [version-badge]: https://img.shields.io/badge/version-0.1.0-3b82f6?style=flat-square
 [license-badge]: https://img.shields.io/badge/license-MIT-22c55e?style=flat-square
 [node-badge]: https://img.shields.io/badge/node-%3E%3D20-339933?style=flat-square&logo=nodedotjs&logoColor=white
-[platform-badge]: https://img.shields.io/badge/platform-DeepSeek%20Harness%20Web-6f42c1?style=flat-square
+[platform-badge]: https://img.shields.io/badge/platform-DeepSeek%20Harness-6f42c1?style=flat-square
 [build-badge]: https://img.shields.io/badge/build-none-success?style=flat-square
 [tests-badge]: https://img.shields.io/badge/tests-11%20passing-brightgreen?style=flat-square
 
