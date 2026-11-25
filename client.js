@@ -118,7 +118,7 @@ window.__ModuleLoader__.load({
      * @returns {object} the embedded conversation content.
      */
     function BtwConversation({
-      sessionId, useSession, useConversation, useSessions, renderFactorySlot,
+      sessionId, useSession, useConversation, useSessions, renderFactorySlot, openWorkspace,
     }) {
       const session = useSession(value => value)
       const conversation = useConversation(value => value)
@@ -133,9 +133,15 @@ window.__ModuleLoader__.load({
         || parentAvailabilityPending
       const hero = shellPhase === 'blank' && (session.openState === 'open' || summaryBlank === true)
       const phase = settling ? 'settling' : hero ? 'hero' : 'active'
-      return renderFactorySlot('conversation.content', { variant: 'embedded', phase, hero }, {
-        slots: { views: FixedChatView },
-      })
+      // `onWorkspaceSelected` is required by the 0.2.3+ content contract and
+      // absent from earlier ones, which ignore the extra input. The handler is
+      // injected below, so the embedded Hero can adopt a Workspace when a
+      // provider contributes its picker.
+      return renderFactorySlot(
+        'conversation.content',
+        { variant: 'embedded', phase, hero, onWorkspaceSelected: openWorkspace },
+        { slots: { views: FixedChatView } },
+      )
     }
 
     /**
@@ -273,6 +279,16 @@ window.__ModuleLoader__.load({
       }, BtwTab)), 'dsh-plugin-btw: tab body')
       ctx.effect(() => ctx.slots.inject(CONVERSATION_SLOT, () => ctx.slots.register({
         name: CONVERSATION_SLOT,
+        inject: () => ({
+          /**
+           * Adopt a Workspace picked in the embedded Hero.
+           * @param {string} workspaceId - picked Workspace.
+           * @param {unknown} adopt - occurrence adopter supplied by the content factory.
+           * @returns {Promise<void>} completion of the list opening.
+           */
+          openWorkspace: (workspaceId, adopt) => ctx.get('uiWorkspace')
+            ?.openWorkspace(workspaceId, adopt) ?? Promise.resolve(),
+        }),
       }, BtwConversation)), 'dsh-plugin-btw: conversation content')
     }
 

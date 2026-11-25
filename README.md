@@ -67,10 +67,25 @@ operation. Approvals it raises render in its own tab.
 ### Requirements
 
 - DeepSeek Harness with its Web surface — `dsh web`, or the Desktop app (the same surface).
+  The supported runtime range is declared in `package.json` as `engines.dsh`
+  (`>=0.2.2-alpha.2 <0.3.0`) and enforced by the Harness plugin compatibility preflight.
 - The composed `subagents` service with the **`fork`** provider
   (`@deepseek-ai/dsh-subagent-fork-in-process`, `providerName: fork`), which the
   `@deepseek-ai/dsh-base` bundle mounts by default.
 - Session persistence — a side thread is a durable child Session.
+
+### DeepSeek Harness compatibility
+
+| Runtime | Status | Notes |
+|---|---|---|
+| `>= 0.2.2-alpha.2, <= 0.2.2-rc.1` | supported | nested `SubagentActivationSpec` (`request: { parent, prompt }`) |
+| `>= 0.2.2-rc.2, < 0.3.0` | supported | flat `SubagentActivationSpec`; the plugin sends both shapes, so no version probe is needed |
+| `< 0.2.2-alpha.2` | not supported | older command/projection contracts are untested |
+| `>= 0.3.0` | not supported | blocked by `engines.dsh` until the plugin is updated |
+
+The dual-shape activation call is documented in [`docs/DESIGN.md`](docs/DESIGN.md). Both runtimes
+read only their own shape and resolve the exact parent before creating anything, so a mismatched
+runtime rejects the call instead of leaving a half-created child.
 
 ### From the Harness UI
 
@@ -190,7 +205,7 @@ implementation, not from a second transcript engine.
 [MIT](LICENSE) © 2026 Dynesshely
 
 <!-- badge links -->
-[version-badge]: https://img.shields.io/badge/version-0.1.0-3b82f6?style=flat-square
+[version-badge]: https://img.shields.io/badge/version-0.1.1-3b82f6?style=flat-square
 [license-badge]: https://img.shields.io/badge/license-MIT-22c55e?style=flat-square
 [node-badge]: https://img.shields.io/badge/node-%3E%3D20-339933?style=flat-square&logo=nodedotjs&logoColor=white
 [platform-badge]: https://img.shields.io/badge/platform-DeepSeek%20Harness-6f42c1?style=flat-square

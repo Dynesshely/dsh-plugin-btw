@@ -6,6 +6,13 @@
  * completed-turn prefix (the `fork` provider), delivered with `caller`
  * delivery so the parent receives no completion notice.
  *
+ * The activation spec carries both generations of the runtime's
+ * `SubagentActivationSpec`: DSH 0.2.2-rc.2 moved `parent` / `prompt` out of a
+ * nested `request` object onto the spec itself. Each runtime reads its own
+ * shape and ignores the other's, and both check the exact parent before
+ * creating anything, so one call serves both generations without a version
+ * probe.
+ *
  * The first activation is `caller` delivery, so the parent receives no
  * completion notice. Any later question — `/btw` or the side panel's own
  * composer — cold-resumes the durable child, and the runtime materializes a
@@ -32,6 +39,37 @@ const OPENED = 'Side thread opened.'
 
 /** Result copy: an idle thread received the question. */
 const CONTINUED = 'Question sent to the side thread.'
+
+/**
+ * Build one activation spec for a new side thread.
+ *
+ * DSH 0.2.2-rc.2 flattened `SubagentActivationSpec`: `parent` and `prompt`
+ * moved from a nested `request` object to the spec itself, and older runtimes
+ * read only the nested shape. The spec therefore carries both. Neither
+ * generation validates unknown keys, and both resolve the exact parent before
+ * creating a child, so the extra shape is inert and a mismatched runtime can
+ * only reject the call, never leave a half-created child behind.
+ *
+ * @param {object} parent - exact live Agent that issued `/btw`.
+ * @param {string} question - the question that opens the thread.
+ * @param {AbortSignal} signal - plugin-lifetime cancellation.
+ * @returns {object} activation spec accepted by both spec generations.
+ */
+export function buildActivationSpec(parent, question, signal) {
+  const prompt = [{ type: 'text', text: buildSideThreadPrompt(question) }]
+  const label = buildBtwLabel(question)
+  return {
+    provider: PROVIDER,
+    label,
+    delivery: 'caller',
+    // DSH >= 0.2.2-rc.2: flat spec.
+    parent,
+    prompt,
+    signal,
+    // DSH <= 0.2.2-rc.1: nested spec; newer runtimes ignore this key.
+    request: { parent, prompt, signal },
+  }
+}
 
 /** Plugin-scoped state: one inbox filter per parent Agent. */
 export function createRuntimeState() {
@@ -67,22 +105,15 @@ export async function runBtw(ctx, state, invocation, signal) {
       )
       return { kind: 'success', text: CONTINUED }
     }
-    const activation = await ctx.subagents.startActivation({
-      provider: PROVIDER,
-      label: buildBtwLabel(parsed.question),
-      request: {
-        parent,
-        prompt: [{ type: 'text', text: buildSideThreadPrompt(parsed.question) }],
-        signal,
-      },
-      signal,
-      delivery: 'caller',
-    })
+    const activation = await ctx.subagents.startActivation(
+      buildActivationSpec(parent, parsed.question, signal),
+    )
     // The runtime settles a local activation on its own once the child finishes
     // its turn; observe the promise so a later rejection is never unhandled.
     void activation.result.catch(() => {})
     return { kind: 'success', text: OPENED }
   } catch (error) {
+    reportFailure(ctx, error)
     return { kind: 'error', text: describeFailure(error) }
   }
 }
@@ -191,15 +222,43 @@ function isBtwThread(ctx, parent, childId) {
 }
 
 /**
+ * Read the structured failure code carried by a runtime error.
+ *
+ * @param {unknown} error - thrown value.
+ * @returns {string} the code, or an empty string for an unstructured failure.
+ */
+function errorCode(error) {
+  return error !== null && typeof error === 'object' && 'code' in error
+    ? String(error.code)
+    : ''
+}
+
+/**
+ * Log an unexpected failure with its stack; known admission failures stay quiet.
+ *
+ * @param {object} ctx - host context carrying the plugin logger.
+ * @param {unknown} error - thrown value.
+ * @returns {void}
+ */
+function reportFailure(ctx, error) {
+  const code = errorCode(error)
+  if (code === 'ACTIVATION_LIMIT_REACHED' || code === 'UNAUTHORIZED') return
+  try {
+    ctx.logger?.warn?.('dsh-plugin-btw: /btw failed')
+    ctx.logger?.warn?.(error)
+  } catch (_loggingFailure) {
+    // Diagnostics must never mask the command result.
+  }
+}
+
+/**
  * Render a thrown activation failure as one user-facing line.
  *
  * @param {unknown} error - thrown value.
  * @returns {string} the command result text.
  */
-function describeFailure(error) {
-  const code = error !== null && typeof error === 'object' && 'code' in error
-    ? String(error.code)
-    : ''
+export function describeFailure(error) {
+  const code = errorCode(error)
   if (code === 'ACTIVATION_LIMIT_REACHED') {
     return 'Cannot open a side thread: the subagent capacity limit is reached. Finish or dismiss a thread and retry.'
   }
@@ -207,5 +266,8 @@ function describeFailure(error) {
     return 'Cannot open a side thread: this conversation\'s agent is no longer live.'
   }
   const message = error instanceof Error ? error.message : String(error)
+  if (error instanceof TypeError) {
+    return `Cannot open a side thread: this DeepSeek Harness runtime reports an incompatible subagent API (${message}). Update dsh-plugin-btw or DeepSeek Harness and retry.`
+  }
   return `/btw failed: ${message}`
 }

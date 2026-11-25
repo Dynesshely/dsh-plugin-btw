@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-btw",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "DSH plugin: /btw asks a side question in a right-sidebar thread without touching the main conversation.",
@@ -41,7 +41,8 @@
     "check": "node --check src/index.js && node --check src/btw.js && node --check src/label.js && node --check src/threads.js && node --check client.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "dsh": ">=0.2.2-alpha.2 <0.3.0"
   },
   "license": "MIT"
 }
