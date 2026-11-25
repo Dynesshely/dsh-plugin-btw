@@ -14,6 +14,7 @@ Give DeepSeek Harness a `/btw` command that asks an additional question (and, wh
 | D4 | `/btw` continues the **newest** thread when it is idle; `/btw new` forces a fresh one | Deterministic: host and browser resolve the same catalog entry. A busy newest thread means the new question starts its own thread instead of interleaving. |
 | D5 | Release each activation when its turn settles; drop settlement notices of resumed continuations at the parent inbox | The runtime itself settles local activations when the child goes idle. The first activation is `caller` (silent), but a cold-resumed continuation is materialized with the runtime's default `parent` delivery, so its settlement must be filtered out of the parent conversation. |
 | D6 | All artifacts in English | Product surfaces in this deployment are bilingual; code and docs stay English. |
+| D7 | Send one activation spec carrying both `SubagentActivationSpec` generations, and declare `engines.dsh` | DSH 0.2.2-rc.2 flattened the spec (`parent`/`prompt` moved out of `request`), and npm `latest` already ships it. Both runtimes read only their own shape and check the exact parent before creating a child, so one spec serves old and new without a version probe; `engines.dsh` keeps unsupported runtimes from installing the plugin at all. |
 
 ## Architecture
 
@@ -36,7 +37,7 @@ Give DeepSeek Harness a `/btw` command that asks an additional question (and, wh
 - `src/index.js` registers the command. `recordInput: false` keeps the question out of the parent's command lifecycle record; the truncated question is only in the child's catalog label.
 - `src/btw.js`:
   - continued thread → `ctx.subagents.sendMessage(parent, childId, [text], { signal })`; a resident activation receives the question directly, a cold one is resumed by the runtime.
-  - new thread → `ctx.subagents.startActivation({ provider: 'fork', label, request: { parent, prompt, signal }, signal, delivery: 'caller' })`; the runtime releases the activation when the first turn settles.
+  - new thread → `buildActivationSpec()` builds one spec that carries the flat shape (`parent`/`prompt`/`signal`) **and** the legacy nested `request` object, then calls `ctx.subagents.startActivation(spec)`. DSH `<= 0.2.2-rc.1` reads `request`; `>= 0.2.2-rc.2` reads the top-level fields and ignores `request`. The runtime releases the activation when the first turn settles. `package.json` declares `engines.dsh: ">=0.2.2-alpha.2 <0.3.0"`.
   - per-parent inbox filter → removes `subagent-settled` notices whose sender is one of the conversation's `BTW · …` threads, covering the `parent` delivery of every resumed continuation.
 - `src/threads.js` selects the newest `BTW · ` **continuable** entry from `ctx.sessionProjections.snapshot(parent.session, ['subagentCatalog'])`, and probes liveness with `ctx.agents.get(id)?.status`.
 - `src/label.js` holds the pure grammar (`new` flag), the label budget, and the boundary prompt.
@@ -48,6 +49,7 @@ Give DeepSeek Harness a `/btw` command that asks an additional question (and, wh
 - `resources.register({ protocol: 'btw', open })` yields `{ address, reference }` and releases the `sessions.retain(...)` reference when the tab closes.
 - `sidebarRightTabs.register({ id, kind: 'btw', patterns: ['dsh-resource://btw/**'], priority: 'extension', canOpen, title })` claims the address and supplies the tab title from the address (`?title=` carries the immutable catalog label).
 - The tab body slot declares one session-scoped child slot (`sidebar.btw.conversation`), wraps the resource reference in `SessionProvider`, and renders that child slot. The child renders the **shared `conversation.content` Factory** with `variant: 'embedded'` and a fixed Chat View; live output, history paging, tool and approval cards, and the composer therefore come from the product implementation, not from the plugin.
+- The Conversation slot injects `openWorkspace` and passes it as `onWorkspaceSelected` to the `conversation.content` Factory. DSH 0.2.3+ requires that input; earlier runtimes ignore the extra field, so the embedded Hero keeps working across both.
 - `command/executed` is a browser-local Cordis event emitted after a host command is admitted; the listener refreshes the parent's projections and opens the newest `BTW · ` thread. Because the host delivers the question before the command returns, the reveal target is stable.
 
 ## DSH contracts relied on
@@ -56,7 +58,7 @@ Give DeepSeek Harness a `/btw` command that asks an additional question (and, wh
 |---|---|
 | Command registry, input claim grammar, log-only `command/run`/`command/done` | `packages/interaction/commands` |
 | Model-surface whitelist (`system/message`, `user/message`, `assistant/message`, `tool/result` only) | `packages/session/session-format-v2-to-v3/src/payload.ts`, `packages/core/session/src/surface.ts` |
-| `subagents.startActivation`, `sendMessage`, catalog projection, capacity | `packages/subagent/subagent/src/index.ts`, `projection-types.ts` |
+| `subagents.startActivation` (both spec generations), `sendMessage`, catalog projection, capacity | `packages/subagent/subagent/src/index.ts`, `projection-types.ts`; published `@deepseek-ai/dsh-subagent` 0.2.2-rc.1 vs 0.2.2-rc.2 |
 | Fork provider seed = completed-turn prefix; inherited model/preset | `packages/subagent/subagent-fork-in-process/src/index.ts` |
 | Session projection wire views (`subagentCatalog`) | `packages/session/session-projection` |
 | Client resource providers, `useResource`, slot runtime | `packages/client/resources`, `packages/client/ui-slots` |
@@ -79,6 +81,16 @@ Give DeepSeek Harness a `/btw` command that asks an additional question (and, wh
 - A continued question is an adjacent-Agent message, not a human-authored user message (host-side continuation has no public user-source channel for cold children).
 - The native right Sidebar layout is in-memory, so tabs are not restored after reload.
 - No configuration schema in v0.1 (provider, label prefix, boundary prompt are constants).
+
+## Verification record (2026-11-25, compatibility fix)
+
+| Check | Result |
+|---|---|
+| Published-version boundary | `@deepseek-ai/dsh-subagent` alpha.2/alpha.3/rc.1 use the nested spec; rc.2/rc.3/rc.4/rc.5/0.2.3-alpha.1/0.2.3-alpha.2 use the flat spec. The failure site on flat runtimes is `this.ctx.get('agents')?.get(spec.parent.id)`; an old-shaped spec yields exactly `TypeError: Cannot read properties of undefined (reading 'id')`. |
+| Dual shape regression | `buildActivationSpec()` carries both `parent`/`prompt`/`signal` and `request: { parent, prompt, signal }`, with identical references; `test/compat.test.js` asserts it. |
+| Error mapping | A `TypeError` becomes an actionable "incompatible subagent API" message; known admission codes keep their dedicated copy; unexpected failures are logged with a stack. |
+| Local runtime (`0.2.2-alpha.2`, nested spec) | `/btw` opens a side thread, streams the answer, and the main conversation stays clean (see the 2026-11-10 record below). |
+| Older/newer client parity | `onWorkspaceSelected` is passed from the injected `openWorkspace`; `0.2.2-rc.5` has no such input and ignores it; `0.2.3-alpha.2` requires it. |
 
 ## Verification record (2026-11-10, local Web profile)
 
